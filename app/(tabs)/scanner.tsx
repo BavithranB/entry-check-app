@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import CryptoJS from 'crypto-js';
 import { Camera, CameraView } from 'expo-camera';
 import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
