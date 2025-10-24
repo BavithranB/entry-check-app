@@ -1,5 +1,6 @@
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import CryptoJS from 'crypto-js';
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -12,34 +13,18 @@ const API_BASE_URL_RAW = Constants.expoConfig?.extra?.apiBaseUrl;
 const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
 
 /**
- * Create an HMAC-SHA256 signature exactly like backend logic using Web Crypto API.
+ * HMAC-SHA256 implementation using crypto-js
  * Backend computes: HMAC-SHA256(secret, body + timestamp + secret)
  */
 async function createSignature(body: string, timestamp: string): Promise<string> {
   const message = body + timestamp + APP_SECRET;
+  const key = APP_SECRET;
   
-  // Convert strings to Uint8Array
-  const encoder = new TextEncoder();
-  const keyData = encoder.encode(APP_SECRET);
-  const messageData = encoder.encode(message);
+  // Use crypto-js to create HMAC-SHA256
+  const hmac = CryptoJS.HmacSHA256(message, key);
+  const signature = hmac.toString(CryptoJS.enc.Hex);
   
-  // Import the secret key for HMAC
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  
-  // Sign the message
-  const signature = await crypto.subtle.sign('HMAC', key, messageData);
-  
-  // Convert to hex string
-  const hashArray = Array.from(new Uint8Array(signature));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  return hashHex;
+  return signature;
 }
 
 /**

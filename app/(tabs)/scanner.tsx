@@ -1,5 +1,6 @@
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import CryptoJS from 'crypto-js';
 import { Camera, CameraView } from 'expo-camera';
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
@@ -13,34 +14,22 @@ const API_BASE_URL_RAW = Constants.expoConfig?.extra?.apiBaseUrl;
 const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
 
 /**
- * Create an HMAC-SHA256 signature exactly like backend logic using Web Crypto API.
+ * HMAC-SHA256 implementation using crypto-js
  * Backend computes: HMAC-SHA256(secret, body + timestamp + secret)
  */
 async function createSignature(body: string, timestamp: string): Promise<string> {
-  const message = body + timestamp + APP_SECRET;
+  const message = body + timestamp + APP_SECRET;  // Message includes secret at the end
+  const key = APP_SECRET;  // Key is the secret
   
-  // Convert strings to Uint8Array
-  const encoder = new TextEncoder();
-  const keyData = encoder.encode(APP_SECRET);
-  const messageData = encoder.encode(message);
+  // Use crypto-js to create HMAC-SHA256
+  const hmac = CryptoJS.HmacSHA256(message, key);
+  const signature = hmac.toString(CryptoJS.enc.Hex);
   
-  // Import the secret key for HMAC
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  console.log('🔑 Signature Debug:');
+  console.log('- Message length:', message.length);
+  console.log('- Generated HMAC:', signature);
   
-  // Sign the message
-  const signature = await crypto.subtle.sign('HMAC', key, messageData);
-  
-  // Convert to hex string
-  const hashArray = Array.from(new Uint8Array(signature));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  return hashHex;
+  return signature;
 }
 
 /**
@@ -94,6 +83,13 @@ async function sendSignedGet(endpoint: string) {
     const timestamp = Date.now().toString();
     const signature = await createSignature(body, timestamp);
 
+    console.log('🔐 GET Request Debug:');
+    console.log('- Endpoint:', endpoint);
+    console.log('- Body:', body);
+    console.log('- Timestamp:', timestamp);
+    console.log('- Signature:', signature);
+    console.log('- APP_SECRET (first 10 chars):', APP_SECRET?.substring(0, 10));
+
     const response = await fetch(endpoint, {
       method: "GET",
       headers: {
@@ -113,11 +109,13 @@ async function sendSignedGet(endpoint: string) {
     }
 
     if (!response.ok) {
+      console.error('❌ Response error:', data);
       throw new Error(data.detail || `Request failed with status ${response.status}`);
     }
 
     return data;
   } catch (error: any) {
+    console.error('❌ Request error:', error);
     if (error.message.includes('Network request failed') || error.message.includes('ERR_FAILED')) {
       throw new Error('Unable to connect to server. Check your internet connection and API URL.');
     }
