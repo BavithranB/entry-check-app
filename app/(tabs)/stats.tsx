@@ -1,10 +1,9 @@
-import { View, Text, StyleSheet, Image, FlatList, RefreshControl } from 'react-native';
-import { useState, useEffect } from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
-import * as Crypto from 'expo-crypto';
-import Constants from 'expo-constants';
+import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
+import Constants from 'expo-constants';
+import { useEffect, useState } from 'react';
+import { FlatList, Image, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 // Access environment variables from expo-constants
 const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
@@ -23,21 +22,40 @@ const api = axios.create({
 });
 
 /**
- * Create an HMAC-SHA256 signature exactly like backend logic.
+ * Create an HMAC-SHA256 signature exactly like backend logic using Web Crypto API.
+ * Backend computes: HMAC-SHA256(secret, body + timestamp + secret)
  */
-async function createSignature(body, timestamp) {
+async function createSignature(body: string, timestamp: string): Promise<string> {
   const message = body + timestamp + APP_SECRET;
-  const hash = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    message
+  
+  // Convert strings to Uint8Array
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(APP_SECRET);
+  const messageData = encoder.encode(message);
+  
+  // Import the secret key for HMAC
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
   );
-  return hash;
+  
+  // Sign the message
+  const signature = await crypto.subtle.sign('HMAC', key, messageData);
+  
+  // Convert to hex string
+  const hashArray = Array.from(new Uint8Array(signature));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  return hashHex;
 }
 
 /**
  * Send a signed GET request to your FastAPI endpoint using axios.
  */
-async function sendSignedRequest(endpoint) {
+async function sendSignedRequest(endpoint: string) {
   try {
     const body = '';  // Empty body for GET requests
     const timestamp = Date.now().toString();
@@ -90,34 +108,55 @@ export default function StatsScreen() {
         throw new Error('API_BASE_URL is not configured. Check your app.json extra config.');
       }
 
-      const response = await sendSignedRequest('/stats');
+      // Get overall stats
+      const statsResponse = await sendSignedRequest('/stats');
+      
+      // Backend returns { summary: [{ year: number, attended: number }] }
+      const totalAttended = statsResponse.summary?.reduce((sum: any, item: any) => sum + (item.attended || 0), 0) || 0;
 
+      // Get recent students (first page)
+      const recentResponse = await sendSignedRequest('/recent_students?page=1&per_page=10');
+      
+      // Backend returns { page, per_page, total, total_pages, students: [...] }
       const newStats = {
-        total: response.total || 0,
-        scanned: response.scanned || 0,
-        manual: response.manual || 0,
+        total: recentResponse.total || 0,
+        scanned: totalAttended, // We'll use attended as scanned for now
+        manual: 0, // Backend doesn't distinguish between scanned and manual
       };
       
       setStats(newStats);
 
       // Transform API response to match component's data structure
-      if (response.recent_checkins && Array.isArray(response.recent_checkins)) {
-        const transformedCheckIns = response.recent_checkins.map((item, index) => ({
-          id: item.id?.toString() || index.toString(),
-          name: item.name || 'Unknown',
-          idNumber: item.reg_no || item.idNumber || 'N/A',
-          type: item.type || (item.scan_type === 'qr' ? 'Scanned' : 'Manual'),
-          time: item.time || item.timestamp || new Date().toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: '2-digit',
-            hour12: true 
-          })
-        }));
+      if (recentResponse.students && Array.isArray(recentResponse.students)) {
+        const transformedCheckIns = recentResponse.students.map((student: any, index: number) => {
+          // Convert attended_at to time format
+          let timeStr = 'N/A';
+          if (student.attended_at) {
+            try {
+              const date = new Date(student.attended_at);
+              timeStr = date.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit',
+                hour12: true 
+              });
+            } catch (e) {
+              console.error('Error parsing date:', e);
+            }
+          }
+
+          return {
+            id: student.reg_no || index.toString(),
+            name: student.name || 'Unknown',
+            idNumber: student.reg_no || 'N/A',
+            type: 'Scanned', // Backend doesn't distinguish between scanned and manual
+            time: timeStr
+          };
+        });
         setRecentCheckIns(transformedCheckIns);
       }
       
       setError(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to fetch stats:", err.message);
       setError(err.message);
     } finally {

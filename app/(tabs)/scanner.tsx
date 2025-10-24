@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { CameraView, Camera } from 'expo-camera';
-import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
-import * as Crypto from 'expo-crypto';
+import { Ionicons } from '@expo/vector-icons';
+import { Camera, CameraView } from 'expo-camera';
 import Constants from 'expo-constants';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Access environment variables from expo-constants
 const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
@@ -14,15 +13,34 @@ const API_BASE_URL_RAW = Constants.expoConfig?.extra?.apiBaseUrl;
 const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
 
 /**
- * Create an HMAC-SHA256 signature exactly like backend logic.
+ * Create an HMAC-SHA256 signature exactly like backend logic using Web Crypto API.
+ * Backend computes: HMAC-SHA256(secret, body + timestamp + secret)
  */
-async function createSignature(body: string, timestamp: string) {
+async function createSignature(body: string, timestamp: string): Promise<string> {
   const message = body + timestamp + APP_SECRET;
-  const hash = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    message
+  
+  // Convert strings to Uint8Array
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(APP_SECRET);
+  const messageData = encoder.encode(message);
+  
+  // Import the secret key for HMAC
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
   );
-  return hash;
+  
+  // Sign the message
+  const signature = await crypto.subtle.sign('HMAC', key, messageData);
+  
+  // Convert to hex string
+  const hashArray = Array.from(new Uint8Array(signature));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  return hashHex;
 }
 
 /**
@@ -42,6 +60,46 @@ async function sendSignedPost(endpoint: string, payload: any) {
         "X-App-Signature": signature,
       },
       body,
+    });
+
+    const contentType = response.headers.get("content-type");
+    let data;
+    
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      throw new Error(`Server returned non-JSON response: ${text}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(data.detail || `Request failed with status ${response.status}`);
+    }
+
+    return data;
+  } catch (error: any) {
+    if (error.message.includes('Network request failed') || error.message.includes('ERR_FAILED')) {
+      throw new Error('Unable to connect to server. Check your internet connection and API URL.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Send a signed GET request to your FastAPI endpoint.
+ */
+async function sendSignedGet(endpoint: string) {
+  try {
+    const body = '';  // Empty body for GET requests
+    const timestamp = Date.now().toString();
+    const signature = await createSignature(body, timestamp);
+
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        "X-App-Timestamp": timestamp,
+        "X-App-Signature": signature,
+      },
     });
 
     const contentType = response.headers.get("content-type");
@@ -93,8 +151,10 @@ export default function ScannerScreen() {
         return;
       }
 
-      const response = await sendSignedPost(`${API_BASE_URL}/stats`, {});
-      setTotalAttendees(response.total || 0);
+      const response = await sendSignedGet(`${API_BASE_URL}/stats`);
+      // Backend returns { summary: [{ year: number, attended: number }] }
+      const total = response.summary?.reduce((sum: number, item: any) => sum + (item.attended || 0), 0) || 0;
+      setTotalAttendees(total);
     } catch (error: any) {
       console.error('Failed to fetch total attendees:', error.message);
     }
@@ -102,7 +162,7 @@ export default function ScannerScreen() {
 
   const checkAttendance = async (regno: string) => {
     try {
-      const response = await sendSignedPost(`${API_BASE_URL}/check_attendance`, { regno });
+      const response = await sendSignedPost(`${API_BASE_URL}/check_attendance`, { reg_no: regno });
       return response;
     } catch (error) {
       throw error;
@@ -111,7 +171,7 @@ export default function ScannerScreen() {
 
   const markAttendance = async (regno: string) => {
     try {
-      const response = await sendSignedPost(`${API_BASE_URL}/mark_attendance`, { regno });
+      const response = await sendSignedPost(`${API_BASE_URL}/mark_attendance`, { reg_no: regno });
       return response;
     } catch (error) {
       throw error;
@@ -136,10 +196,11 @@ export default function ScannerScreen() {
       // First check if already attended
       const checkResponse = await checkAttendance(data);
       
-      if (checkResponse.attended) {
+      // Backend returns status: "attended" or "not attended"
+      if (checkResponse.status === "attended") {
         Alert.alert(
           'Already Checked In',
-          `${checkResponse.name || data} has already checked in.`,
+          `${checkResponse.name || data} has already checked in at ${checkResponse.attended_at || 'earlier'}.`,
           [
             {
               text: 'OK',
@@ -151,19 +212,22 @@ export default function ScannerScreen() {
         // Mark attendance
         const markResponse = await markAttendance(data);
         
-        Alert.alert(
-          'Check-in Successful',
-          `${markResponse.name || data} has been checked in successfully!`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                fetchTotalAttendees();
-                resetScanner();
+        // Backend returns status: "success" for successful marking
+        if (markResponse.status === "success") {
+          Alert.alert(
+            'Check-in Successful',
+            markResponse.message || `${data} has been checked in successfully!`,
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  fetchTotalAttendees();
+                  resetScanner();
+                },
               },
-            },
-          ]
-        );
+            ]
+          );
+        }
       }
     } catch (error: any) {
       Alert.alert(
