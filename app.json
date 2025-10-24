@@ -8,8 +8,17 @@
     "scheme": "eventcheckinapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "extra": {
+      "appSecret": "cdb8d7497b34a314db76dd832803b393f6f4ef0dfa2a1dd230a7c8b32d600fb9",
+      "apiBaseUrl": "https://unique-inspiration-production.up.railway.app"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +28,9 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "usesCleartextTraffic": true
+
     },
     "web": {
       "output": "static",

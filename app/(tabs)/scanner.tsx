@@ -1,8 +1,71 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
+import * as Crypto from 'expo-crypto';
+import Constants from 'expo-constants';
+
+// Access environment variables from expo-constants
+const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
+const API_BASE_URL_RAW = Constants.expoConfig?.extra?.apiBaseUrl;
+
+// Ensure HTTPS is used to avoid CORS redirect issues
+const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
+
+/**
+ * Create an HMAC-SHA256 signature exactly like backend logic.
+ */
+async function createSignature(body: string, timestamp: string) {
+  const message = body + timestamp + APP_SECRET;
+  const hash = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    message
+  );
+  return hash;
+}
+
+/**
+ * Send a signed POST request to your FastAPI endpoint.
+ */
+async function sendSignedPost(endpoint: string, payload: any) {
+  try {
+    const body = JSON.stringify(payload);
+    const timestamp = Date.now().toString();
+    const signature = await createSignature(body, timestamp);
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-App-Timestamp": timestamp,
+        "X-App-Signature": signature,
+      },
+      body,
+    });
+
+    const contentType = response.headers.get("content-type");
+    let data;
+    
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      throw new Error(`Server returned non-JSON response: ${text}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(data.detail || `Request failed with status ${response.status}`);
+    }
+
+    return data;
+  } catch (error: any) {
+    if (error.message.includes('Network request failed') || error.message.includes('ERR_FAILED')) {
+      throw new Error('Unable to connect to server. Check your internet connection and API URL.');
+    }
+    throw error;
+  }
+}
 
 export default function ScannerScreen() {
   const { colors } = useTheme();
@@ -10,6 +73,8 @@ export default function ScannerScreen() {
   const [scanned, setScanned] = useState(false);
   const [lastScanned, setLastScanned] = useState('');
   const [cameraActive, setCameraActive] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [totalAttendees, setTotalAttendees] = useState(0);
 
   useEffect(() => {
     const getCameraPermissions = async () => {
@@ -18,27 +83,107 @@ export default function ScannerScreen() {
     };
 
     getCameraPermissions();
+    fetchTotalAttendees();
   }, []);
 
-  const handleBarCodeScanned = ({ type, data }: { type: string; data: string }) => {
+  const fetchTotalAttendees = async () => {
+    try {
+      if (!APP_SECRET || !API_BASE_URL) {
+        console.error('API configuration missing');
+        return;
+      }
+
+      const response = await sendSignedPost(`${API_BASE_URL}/stats`, {});
+      setTotalAttendees(response.total || 0);
+    } catch (error: any) {
+      console.error('Failed to fetch total attendees:', error.message);
+    }
+  };
+
+  const checkAttendance = async (regno: string) => {
+    try {
+      const response = await sendSignedPost(`${API_BASE_URL}/check_attendance`, { regno });
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const markAttendance = async (regno: string) => {
+    try {
+      const response = await sendSignedPost(`${API_BASE_URL}/mark_attendance`, { regno });
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
+    if (isProcessing) return;
+    
     setScanned(true);
+    setIsProcessing(true);
     setLastScanned(data);
     setCameraActive(false);
     
-    // Show alert with scanned data
-    Alert.alert(
-      'Barcode Scanned',
-      `Type: ${type}\nData: ${data}`,
-      [
-        {
-          text: 'OK',
-          onPress: () => {
-            setScanned(false);
-            setCameraActive(true);
+    try {
+      if (!APP_SECRET || !API_BASE_URL) {
+        Alert.alert('Configuration Error', 'API is not properly configured');
+        resetScanner();
+        return;
+      }
+
+      // First check if already attended
+      const checkResponse = await checkAttendance(data);
+      
+      if (checkResponse.attended) {
+        Alert.alert(
+          'Already Checked In',
+          `${checkResponse.name || data} has already checked in.`,
+          [
+            {
+              text: 'OK',
+              onPress: () => resetScanner(),
+            },
+          ]
+        );
+      } else {
+        // Mark attendance
+        const markResponse = await markAttendance(data);
+        
+        Alert.alert(
+          'Check-in Successful',
+          `${markResponse.name || data} has been checked in successfully!`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                fetchTotalAttendees();
+                resetScanner();
+              },
+            },
+          ]
+        );
+      }
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to process check-in',
+        [
+          {
+            text: 'OK',
+            onPress: () => resetScanner(),
           },
-        },
-      ]
-    );
+        ]
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const resetScanner = () => {
+    setScanned(false);
+    setCameraActive(true);
   };
 
   const toggleCamera = () => {
@@ -94,6 +239,12 @@ export default function ScannerScreen() {
                 <View style={[styles.corner, styles.cornerBottomLeft, { borderColor: colors.primary }]} />
                 <View style={[styles.corner, styles.cornerBottomRight, { borderColor: colors.primary }]} />
               </View>
+              {isProcessing && (
+                <View style={styles.processingOverlay}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={styles.processingText}>Processing...</Text>
+                </View>
+              )}
             </View>
           </CameraView>
         ) : (
@@ -108,6 +259,7 @@ export default function ScannerScreen() {
         <TouchableOpacity 
           style={[styles.toggleButton, { backgroundColor: colors.primary }]}
           onPress={toggleCamera}
+          disabled={isProcessing}
         >
           <Ionicons 
             name={cameraActive ? 'stop' : 'camera'} 
@@ -123,7 +275,7 @@ export default function ScannerScreen() {
       <View style={[styles.footer, { backgroundColor: colors.card }]}>
         {lastScanned && (
           <View style={[styles.lastScannedContainer, { backgroundColor: colors.backgroundSecondary }]}>
-            <Ionicons name="time-outline" size={20} color="#666" />
+            <Ionicons name="time-outline" size={20} color={colors.textSecondary} />
             <Text style={[styles.lastScannedText, { color: colors.textSecondary }]}>
               Last scanned: {lastScanned}
             </Text>
@@ -132,8 +284,8 @@ export default function ScannerScreen() {
       </View>
 
       <View style={styles.statsContainer}>
-        <Text style={styles.statsNumber}>247</Text>
-        <Text style={styles.statsLabel}>Total Attendees</Text>
+        <Text style={[styles.statsNumber, { color: colors.text }]}>{totalAttendees}</Text>
+        <Text style={[styles.statsLabel, { color: colors.textSecondary }]}>Total Attendees</Text>
       </View>
     </View>
   );
@@ -225,6 +377,17 @@ const styles = StyleSheet.create({
     borderRightWidth: 2,
     borderBottomRightRadius: 8,
   },
+  processingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  processingText: {
+    color: '#fff',
+    marginTop: 16,
+    fontSize: 16,
+  },
   footer: {
     padding: 20,
     borderTopWidth: 1,
@@ -260,10 +423,8 @@ const styles = StyleSheet.create({
   statsNumber: {
     fontSize: 36,
     fontWeight: 'bold',
-    color: '#000',
   },
   statsLabel: {
     fontSize: 16,
-    color: '#666',
   },
 });
