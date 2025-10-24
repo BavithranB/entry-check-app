@@ -76,11 +76,8 @@ export default function StatsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [stats, setStats] = useState({
-    total: 0,
-    scanned: 0,
-    manual: 0,
-  });
+  const [totalAttendees, setTotalAttendees] = useState(0);
+  const [yearWiseStats, setYearWiseStats] = useState<Array<{ year: number; attended: number }>>([]);
   const [recentCheckIns, setRecentCheckIns] = useState([]);
 
   // Fetch stats from the API
@@ -97,19 +94,14 @@ export default function StatsScreen() {
       const statsResponse = await sendSignedRequest('/stats');
       
       // Backend returns { summary: [{ year: number, attended: number }] }
-      const totalAttended = statsResponse.summary?.reduce((sum: any, item: any) => sum + (item.attended || 0), 0) || 0;
+      const yearStats = statsResponse.summary || [];
+      const total = yearStats.reduce((sum: number, item: any) => sum + (item.attended || 0), 0);
+      
+      setTotalAttendees(total);
+      setYearWiseStats(yearStats);
 
       // Get recent students (first page)
       const recentResponse = await sendSignedRequest('/recent_students?page=1&per_page=10');
-      
-      // Backend returns { page, per_page, total, total_pages, students: [...] }
-      const newStats = {
-        total: recentResponse.total || 0,
-        scanned: totalAttended, // We'll use attended as scanned for now
-        manual: 0, // Backend doesn't distinguish between scanned and manual
-      };
-      
-      setStats(newStats);
 
       // Transform API response to match component's data structure
       if (recentResponse.students && Array.isArray(recentResponse.students)) {
@@ -216,19 +208,32 @@ export default function StatsScreen() {
 
       {/* Stats Summary */}
       <View style={[styles.summaryContainer, { backgroundColor: colors.card }]}>
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: colors.text }]}>{stats.total}</Text>
-          <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Total</Text>
+        {/* Left Side - Total Attendees */}
+        <View style={styles.totalSection}>
+          <Text style={[styles.totalNumber, { color: colors.primary }]}>{totalAttendees}</Text>
+          <Text style={[styles.totalLabel, { color: colors.textSecondary }]}>Total Attendees</Text>
         </View>
-        <View style={[styles.summaryDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: colors.primary }]}>{stats.scanned}</Text>
-          <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Scanned</Text>
-        </View>
-        <View style={[styles.summaryDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: colors.secondary }]}>{stats.manual}</Text>
-          <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Manual</Text>
+        
+        {/* Divider */}
+        <View style={[styles.verticalDivider, { backgroundColor: colors.border }]} />
+        
+        {/* Right Side - Year-wise Breakdown */}
+        <View style={styles.yearWiseSection}>
+          <Text style={[styles.yearWiseTitle, { color: colors.text }]}>Year-wise</Text>
+          {yearWiseStats.length > 0 ? (
+            yearWiseStats.map((yearStat, index) => (
+              <View key={index} style={styles.yearRow}>
+                <Text style={[styles.yearText, { color: colors.textSecondary }]}>
+                  Year {yearStat.year}
+                </Text>
+                <Text style={[styles.yearCount, { color: colors.text }]}>
+                  {yearStat.attended}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={[styles.noDataText, { color: colors.textTertiary }]}>No data</Text>
+          )}
         </View>
       </View>
 
@@ -279,15 +284,60 @@ const styles = StyleSheet.create({
   },
   summaryContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     margin: 20,
     borderRadius: 12,
-    paddingVertical: 16,
+    padding: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 2,
+  },
+  totalSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingRight: 16,
+  },
+  totalNumber: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  totalLabel: {
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  verticalDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    marginVertical: 8,
+  },
+  yearWiseSection: {
+    flex: 1,
+    paddingLeft: 16,
+  },
+  yearWiseTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  yearRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  yearText: {
+    fontSize: 14,
+  },
+  yearCount: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  noDataText: {
+    fontSize: 14,
+    fontStyle: 'italic',
   },
   summaryItem: {
     flex: 1,

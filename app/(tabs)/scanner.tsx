@@ -1,11 +1,11 @@
+import ThemedDialog from '@/components/themed-dialog';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import CryptoJS from 'crypto-js';
 import { Camera, CameraView } from 'expo-camera';
 import Constants from 'expo-constants';
-import * as Crypto from 'expo-crypto';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Access environment variables from expo-constants
 const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
@@ -132,6 +132,12 @@ export default function ScannerScreen() {
   const [cameraActive, setCameraActive] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [totalAttendees, setTotalAttendees] = useState(0);
+  
+  // Dialog state
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [dialogTitle, setDialogTitle] = useState('');
+  const [dialogMessage, setDialogMessage] = useState('');
+  const [dialogType, setDialogType] = useState<'success' | 'error' | 'warning' | 'info'>('info');
 
   useEffect(() => {
     const getCameraPermissions = async () => {
@@ -178,70 +184,66 @@ export default function ScannerScreen() {
   };
 
   const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
-    if (isProcessing) return;
+    if (isProcessing || scanned) return;  // Block if already processing or scanned
     
     setScanned(true);
     setIsProcessing(true);
     setLastScanned(data);
-    setCameraActive(false);
     
     try {
       if (!APP_SECRET || !API_BASE_URL) {
-        Alert.alert('Configuration Error', 'API is not properly configured');
-        resetScanner();
+        setDialogTitle('Configuration Error');
+        setDialogMessage('API is not properly configured');
+        setDialogType('error');
+        setDialogVisible(true);
         return;
       }
 
-      // First check if already attended
+      // First check if already attended and get student info
       const checkResponse = await checkAttendance(data);
+      
+      // Extract student info from check response
+      const studentName = checkResponse.name || 'Student';
+      const studentYear = checkResponse.year || 'N/A';
+      const studentDept = checkResponse.department || 'N/A';
       
       // Backend returns status: "attended" or "not attended"
       if (checkResponse.status === "attended") {
-        Alert.alert(
-          'Already Checked In',
-          `${checkResponse.name || data} has already checked in at ${checkResponse.attended_at || 'earlier'}.`,
-          [
-            {
-              text: 'OK',
-              onPress: () => resetScanner(),
-            },
-          ]
-        );
+        const attendedTime = checkResponse.attended_at || 'earlier';
+        setDialogTitle('Already Checked In');
+        setDialogMessage(`Name: ${studentName}\nReg No: ${data}\nYear: ${studentYear}\nDepartment: ${studentDept}\n\nAlready checked in at ${attendedTime}`);
+        setDialogType('warning');
+        setDialogVisible(true);
+        setIsProcessing(false);
       } else {
-        // Mark attendance
+        // Mark attendance (status is "not attended")
         const markResponse = await markAttendance(data);
         
         // Backend returns status: "success" for successful marking
         if (markResponse.status === "success") {
-          Alert.alert(
-            'Check-in Successful',
-            markResponse.message || `${data} has been checked in successfully!`,
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  fetchTotalAttendees();
-                  resetScanner();
-                },
-              },
-            ]
-          );
+          // Use student info from check response, timestamp from mark response
+          const timestamp = markResponse.attended_at || 'Just now';
+          
+          setDialogTitle('✓ Check-in Successful');
+          setDialogMessage(`Name: ${studentName}\nReg No: ${data}\nYear: ${studentYear}\nDepartment: ${studentDept}\nTime: ${timestamp}`);
+          setDialogType('success');
+          setDialogVisible(true);
+          fetchTotalAttendees();
+          setIsProcessing(false);
         }
       }
     } catch (error: any) {
-      Alert.alert(
-        'Error',
-        error.message || 'Failed to process check-in',
-        [
-          {
-            text: 'OK',
-            onPress: () => resetScanner(),
-          },
-        ]
-      );
-    } finally {
+      setDialogTitle('Error');
+      setDialogMessage(error.message || 'Failed to process check-in');
+      setDialogType('error');
+      setDialogVisible(true);
       setIsProcessing(false);
     }
+  };
+
+  const handleDialogClose = () => {
+    setDialogVisible(false);
+    resetScanner();
   };
 
   const resetScanner = () => {
@@ -312,7 +314,7 @@ export default function ScannerScreen() {
           </CameraView>
         ) : (
           <View style={[styles.camera, styles.cameraInactive, { backgroundColor: colors.backgroundSecondary }]}>
-            <Ionicons name="camera-off" size={48} color={colors.textTertiary} />
+            <Ionicons name="camera-outline" size={48} color={colors.textTertiary} />
             <Text style={[styles.cameraOffText, { color: colors.textSecondary }]}>
               Camera is off
             </Text>
@@ -350,6 +352,15 @@ export default function ScannerScreen() {
         <Text style={[styles.statsNumber, { color: colors.text }]}>{totalAttendees}</Text>
         <Text style={[styles.statsLabel, { color: colors.textSecondary }]}>Total Attendees</Text>
       </View>
+
+      {/* Themed Dialog */}
+      <ThemedDialog
+        visible={dialogVisible}
+        title={dialogTitle}
+        message={dialogMessage}
+        type={dialogType}
+        onClose={handleDialogClose}
+      />
     </View>
   );
 }

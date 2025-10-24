@@ -1,19 +1,24 @@
 {
   "expo": {
-    "name": "event-checkin-app",
+    "name": "Thandi Than Paren v2",
     "slug": "event-checkin-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/gold_CL.png",
     "scheme": "eventcheckinapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "extra": {
       "appSecret": "cdb8d7497b34a314db76dd832803b393f6f4ef0dfa2a1dd230a7c8b32d600fb9",
-      "apiBaseUrl": "https://unique-inspiration-production.up.railway.app"
+      "apiBaseUrl": "https://unique-inspiration-production.up.railway.app",
+      "router": {},
+      "eas": {
+        "projectId": "c7e11439-667e-4c35-834a-1d77c136471b"
+      }
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.talentia.thandiparen",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -21,27 +26,25 @@
       }
     },
     "android": {
+      "package": "com.talentia.thandiparen",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/gold_CL_adaptive.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "usesCleartextTraffic": true
-
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/gold_CL.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/gold_CL_splash.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",

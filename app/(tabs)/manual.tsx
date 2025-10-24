@@ -1,9 +1,10 @@
+import ThemedDialog from '@/components/themed-dialog';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import CryptoJS from 'crypto-js';
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // Access environment variables from expo-constants
 const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
@@ -115,6 +116,12 @@ export default function ManualEntryScreen() {
   const [lastAdded, setLastAdded] = useState('');
   const [totalAttendees, setTotalAttendees] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Dialog state
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [dialogTitle, setDialogTitle] = useState('');
+  const [dialogMessage, setDialogMessage] = useState('');
+  const [dialogType, setDialogType] = useState<'success' | 'error' | 'warning' | 'info'>('info');
 
   useEffect(() => {
     fetchTotalAttendees();
@@ -140,45 +147,63 @@ export default function ManualEntryScreen() {
     const trimmedRegNo = regNo.trim().toUpperCase();
     
     if (!trimmedRegNo) {
-      Alert.alert('Error', 'Please enter a registration number');
+      setDialogTitle('Error');
+      setDialogMessage('Please enter a registration number');
+      setDialogType('error');
+      setDialogVisible(true);
       return;
     }
 
     if (!APP_SECRET || !API_BASE_URL) {
-      Alert.alert('Configuration Error', 'API is not properly configured');
+      setDialogTitle('Configuration Error');
+      setDialogMessage('API is not properly configured');
+      setDialogType('error');
+      setDialogVisible(true);
       return;
     }
 
     setIsProcessing(true);
 
     try {
-      // First check if already attended
+      // First check if already attended and get student info
       const checkResponse = await sendSignedPost(`${API_BASE_URL}/check_attendance`, { reg_no: trimmedRegNo });
+      
+      // Extract student info from check response
+      const studentName = checkResponse.name || 'Student';
+      const studentYear = checkResponse.year || 'N/A';
+      const studentDept = checkResponse.department || 'N/A';
       
       // Backend returns status: "attended" or "not attended"
       if (checkResponse.status === "attended") {
-        Alert.alert(
-          'Already Checked In',
-          `${checkResponse.name || trimmedRegNo} has already checked in at ${checkResponse.attended_at || 'earlier'}.`
-        );
+        const attendedTime = checkResponse.attended_at || 'earlier';
+        setDialogTitle('Already Checked In');
+        setDialogMessage(`Name: ${studentName}\nReg No: ${trimmedRegNo}\nYear: ${studentYear}\nDepartment: ${studentDept}\n\nAlready checked in at ${attendedTime}`);
+        setDialogType('warning');
+        setDialogVisible(true);
         setRegNo('');
       } else {
-        // Mark attendance
+        // Mark attendance (status is "not attended")
         const markResponse = await sendSignedPost(`${API_BASE_URL}/mark_attendance`, { reg_no: trimmedRegNo });
         
         // Backend returns status: "success" for successful marking
         if (markResponse.status === "success") {
-          Alert.alert(
-            'Check-in Successful',
-            markResponse.message || `${trimmedRegNo} has been checked in successfully!`
-          );
+          // Use student info from check response, timestamp from mark response
+          const timestamp = markResponse.attended_at || 'Just now';
+          
+          setDialogTitle('✓ Check-in Successful');
+          setDialogMessage(`Name: ${studentName}\nReg No: ${trimmedRegNo}\nYear: ${studentYear}\nDepartment: ${studentDept}\nTime: ${timestamp}`);
+          setDialogType('success');
+          setDialogVisible(true);
           setLastAdded(trimmedRegNo);
           setRegNo('');
           fetchTotalAttendees();
         }
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to process check-in');
+      setDialogTitle('Error');
+      setDialogMessage(error.message || 'Failed to process check-in');
+      setDialogType('error');
+      setDialogVisible(true);
     } finally {
       setIsProcessing(false);
     }
@@ -217,6 +242,7 @@ export default function ManualEntryScreen() {
             value={regNo}
             onChangeText={setRegNo}
             autoCapitalize="characters"
+            keyboardType="numeric"
             editable={!isProcessing}
           />
           <TouchableOpacity 
@@ -252,6 +278,15 @@ export default function ManualEntryScreen() {
           <Text style={[styles.statsLabel, { color: colors.textSecondary }]}>Total Attendees</Text>
         </View>
       </View>
+
+      {/* Themed Dialog */}
+      <ThemedDialog
+        visible={dialogVisible}
+        title={dialogTitle}
+        message={dialogMessage}
+        type={dialogType}
+        onClose={() => setDialogVisible(false)}
+      />
     </View>
   );
 }
