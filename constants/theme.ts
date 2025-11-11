@@ -5,46 +5,55 @@
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+// Extracted/adjusted palette to match the attached CL Halloween logo.
+// Dominant colors: black background, pumpkin-orange primary, burnt orange secondary,
+// deep purple supporting hue, and off-white/ivory accents for the white CL shapes.
+const HALLOWEEN = {
+  primary: '#EB5B00', // pumpkin / bright orange (logo triangle)
+  secondary: '#B12C00', // burnt orange (darker pumpkin)
+  support: '#640D5F', // deep plum/purple (subtle accent in the palette)
+  ivory: '#F6F4F3', // off-white for logos and text contrast
+  black: '#000000',
+};
 
 export const Colors = {
   light: {
     text: '#1E1E1E',
-    background: '#FFFFFF',
-    primary: '#2563EB',
-    secondary: '#4F46E5',
-    accent: '#7C3AED',
-    error: '#DC2626',
-    success: '#10B981',
-    warning: '#F59E0B',
-    info: '#3B82F6',
-    border: '#E5E7EB',
-    card: '#FFFFFF',
-    notification: '#F43F5E',
-    textSecondary: '#6B7280',
-    textTertiary: '#9CA3AF',
-    backgroundSecondary: '#F9FAFB',
-    backgroundTertiary: '#F3F4F6',
+    // Light variant kept mostly for readability; warm parchment with subtle orange tint
+    background: '#FFF6F0',
+    primary: HALLOWEEN.primary,
+    secondary: HALLOWEEN.secondary,
+    accent: HALLOWEEN.support,
+    error: '#8B0000',
+    success: '#0B6A3A',
+    warning: HALLOWEEN.primary,
+    info: HALLOWEEN.support,
+    border: '#ECD9D0',
+    card: '#FFF9F6',
+    notification: HALLOWEEN.secondary,
+    textSecondary: '#6B4A47',
+    textTertiary: '#9C857F',
+    backgroundSecondary: '#FFF0E2',
+    backgroundTertiary: '#FBEFE8',
   },
   dark: {
-    // Pure black theme
-    text: '#FFFFFF',
-    background: '#000000',
-    primary: '#3B82F6',
-    secondary: '#6366F1',
-    accent: '#8B5CF6',
-    error: '#EF4444',
-    success: '#10B981',
-    warning: '#F59E0B',
-    info: '#3B82F6',
-    border: '#1F1F1F',
+    // Use pure black to match the logo background and create a creepy canvas.
+    text: HALLOWEEN.ivory,
+    background: HALLOWEEN.black,
+    primary: HALLOWEEN.primary,
+    secondary: HALLOWEEN.secondary,
+    accent: HALLOWEEN.support,
+    error: '#8B0000',
+    success: '#0B6A3A',
+    warning: HALLOWEEN.primary,
+    info: HALLOWEEN.support,
+    border: '#120904',
     card: '#0A0A0A',
-    notification: '#F43F5E',
-    textSecondary: '#A0A0A0',
-    textTertiary: '#707070',
-    backgroundSecondary: '#0A0A0A',
-    backgroundTertiary: '#121212',
+    notification: HALLOWEEN.secondary,
+    textSecondary: '#C9B7B2',
+    textTertiary: '#9F8A85',
+    backgroundSecondary: '#0A0604',
+    backgroundTertiary: '#050303',
   },
 };
 

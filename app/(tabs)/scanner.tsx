@@ -1,55 +1,25 @@
 import ThemedDialog from '@/components/themed-dialog';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
-import CryptoJS from 'crypto-js';
 import { Camera, CameraView } from 'expo-camera';
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-// Access environment variables from expo-constants
-const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
 const API_BASE_URL_RAW = Constants.expoConfig?.extra?.apiBaseUrl;
-
-// Ensure HTTPS is used to avoid CORS redirect issues
 const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
 
 /**
- * HMAC-SHA256 implementation using crypto-js
- * Backend computes: HMAC-SHA256(secret, body + timestamp + secret)
+ * Mark attendance with encrypted ID
  */
-async function createSignature(body: string, timestamp: string): Promise<string> {
-  const message = body + timestamp + APP_SECRET;  // Message includes secret at the end
-  const key = APP_SECRET;  // Key is the secret
-  
-  // Use crypto-js to create HMAC-SHA256
-  const hmac = CryptoJS.HmacSHA256(message, key);
-  const signature = hmac.toString(CryptoJS.enc.Hex);
-  
-  console.log('🔑 Signature Debug:');
-  console.log('- Message length:', message.length);
-  console.log('- Generated HMAC:', signature);
-  
-  return signature;
-}
-
-/**
- * Send a signed POST request to your FastAPI endpoint.
- */
-async function sendSignedPost(endpoint: string, payload: any) {
+async function markAttendance(encryptedId: string) {
   try {
-    const body = JSON.stringify(payload);
-    const timestamp = Date.now().toString();
-    const signature = await createSignature(body, timestamp);
-
-    const response = await fetch(endpoint, {
+    const response = await fetch(`${API_BASE_URL}/attendance_mark`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-App-Timestamp": timestamp,
-        "X-App-Signature": signature,
       },
-      body,
+      body: JSON.stringify({ encrypted_id: encryptedId }),
     });
 
     const contentType = response.headers.get("content-type");
@@ -63,60 +33,11 @@ async function sendSignedPost(endpoint: string, payload: any) {
     }
 
     if (!response.ok) {
-      throw new Error(data.detail || `Request failed with status ${response.status}`);
+      throw new Error(data.detail || data.message || `Request failed with status ${response.status}`);
     }
 
     return data;
   } catch (error: any) {
-    if (error.message.includes('Network request failed') || error.message.includes('ERR_FAILED')) {
-      throw new Error('Unable to connect to server. Check your internet connection and API URL.');
-    }
-    throw error;
-  }
-}
-
-/**
- * Send a signed GET request to your FastAPI endpoint.
- */
-async function sendSignedGet(endpoint: string) {
-  try {
-    const body = '';  // Empty body for GET requests
-    const timestamp = Date.now().toString();
-    const signature = await createSignature(body, timestamp);
-
-    console.log('🔐 GET Request Debug:');
-    console.log('- Endpoint:', endpoint);
-    console.log('- Body:', body);
-    console.log('- Timestamp:', timestamp);
-    console.log('- Signature:', signature);
-    console.log('- APP_SECRET (first 10 chars):', APP_SECRET?.substring(0, 10));
-
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        "X-App-Timestamp": timestamp,
-        "X-App-Signature": signature,
-      },
-    });
-
-    const contentType = response.headers.get("content-type");
-    let data;
-    
-    if (contentType && contentType.includes("application/json")) {
-      data = await response.json();
-    } else {
-      const text = await response.text();
-      throw new Error(`Server returned non-JSON response: ${text}`);
-    }
-
-    if (!response.ok) {
-      console.error('❌ Response error:', data);
-      throw new Error(data.detail || `Request failed with status ${response.status}`);
-    }
-
-    return data;
-  } catch (error: any) {
-    console.error('❌ Request error:', error);
     if (error.message.includes('Network request failed') || error.message.includes('ERR_FAILED')) {
       throw new Error('Unable to connect to server. Check your internet connection and API URL.');
     }
@@ -128,7 +49,7 @@ export default function ScannerScreen() {
   const { colors } = useTheme();
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
-  const [lastScanned, setLastScanned] = useState('');
+  const [lastScannedName, setLastScannedName] = useState('');
   const [cameraActive, setCameraActive] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [totalAttendees, setTotalAttendees] = useState(0);
@@ -138,6 +59,7 @@ export default function ScannerScreen() {
   const [dialogTitle, setDialogTitle] = useState('');
   const [dialogMessage, setDialogMessage] = useState('');
   const [dialogType, setDialogType] = useState<'success' | 'error' | 'warning' | 'info'>('info');
+  const [studentDetails, setStudentDetails] = useState<any>(null);
 
   useEffect(() => {
     const getCameraPermissions = async () => {
@@ -146,103 +68,69 @@ export default function ScannerScreen() {
     };
 
     getCameraPermissions();
-    fetchTotalAttendees();
   }, []);
 
-  const fetchTotalAttendees = async () => {
-    try {
-      if (!APP_SECRET || !API_BASE_URL) {
-        console.error('API configuration missing');
-        return;
-      }
-
-      const response = await sendSignedGet(`${API_BASE_URL}/stats`);
-      // Backend returns { summary: [{ year: number, attended: number }] }
-      const total = response.summary?.reduce((sum: number, item: any) => sum + (item.attended || 0), 0) || 0;
-      setTotalAttendees(total);
-    } catch (error: any) {
-      console.error('Failed to fetch total attendees:', error.message);
-    }
-  };
-
-  const checkAttendance = async (regno: string) => {
-    try {
-      const response = await sendSignedPost(`${API_BASE_URL}/check_attendance`, { reg_no: regno });
-      return response;
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  const markAttendance = async (regno: string) => {
-    try {
-      const response = await sendSignedPost(`${API_BASE_URL}/mark_attendance`, { reg_no: regno });
-      return response;
-    } catch (error) {
-      throw error;
-    }
-  };
-
   const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
-    if (isProcessing || scanned) return;  // Block if already processing or scanned
+    if (isProcessing || scanned) return;
     
     setScanned(true);
     setIsProcessing(true);
-    setLastScanned(data);
     
     try {
-      if (!APP_SECRET || !API_BASE_URL) {
+      if (!API_BASE_URL) {
         setDialogTitle('Configuration Error');
         setDialogMessage('API is not properly configured');
         setDialogType('error');
         setDialogVisible(true);
+        setIsProcessing(false);
         return;
       }
 
-      // First check if already attended and get student info
-      const checkResponse = await checkAttendance(data);
+      const response = await markAttendance(data);
       
-      // Extract student info from check response
-      const studentName = checkResponse.name || 'Student';
-      const studentYear = checkResponse.year || 'N/A';
-      const studentDept = checkResponse.department || 'N/A';
-      
-      // Backend returns status: "attended" or "not attended"
-      if (checkResponse.status === "attended") {
-        const attendedTime = checkResponse.attended_at || 'earlier';
+      // Store student details for display
+      const details = {
+        name: response.name || 'N/A',
+        dept: response.dept || 'N/A',
+        year: response.year || 'N/A',
+        sec: response.sec || 'N/A',
+        eventName: response.event_name || 'Event',
+      };
+      setStudentDetails(details);
+      setLastScannedName(details.name);
+
+      if (response.status === "already scanned") {
         setDialogTitle('Already Checked In');
-        setDialogMessage(`Name: ${studentName}\nReg No: ${data}\nYear: ${studentYear}\nDepartment: ${studentDept}\n\nAlready checked in at ${attendedTime}`);
+        setDialogMessage(response.message || 'This QR code has already been scanned');
         setDialogType('warning');
         setDialogVisible(true);
-        setIsProcessing(false);
+      } else if (response.status === "success") {
+        setDialogTitle('✓ Check-in Successful');
+        setDialogMessage(response.message || 'Attendance marked successfully');
+        setDialogType('success');
+        setDialogVisible(true);
+        setTotalAttendees(prev => prev + 1);
       } else {
-        // Mark attendance (status is "not attended")
-        const markResponse = await markAttendance(data);
-        
-        // Backend returns status: "success" for successful marking
-        if (markResponse.status === "success") {
-          // Use student info from check response, timestamp from mark response
-          const timestamp = markResponse.attended_at || 'Just now';
-          
-          setDialogTitle('✓ Check-in Successful');
-          setDialogMessage(`Name: ${studentName}\nReg No: ${data}\nYear: ${studentYear}\nDepartment: ${studentDept}\nTime: ${timestamp}`);
-          setDialogType('success');
-          setDialogVisible(true);
-          fetchTotalAttendees();
-          setIsProcessing(false);
-        }
+        setDialogTitle('Unknown Status');
+        setDialogMessage(response.message || 'Unknown response from server');
+        setDialogType('info');
+        setDialogVisible(true);
       }
+      
+      setIsProcessing(false);
     } catch (error: any) {
       setDialogTitle('Error');
       setDialogMessage(error.message || 'Failed to process check-in');
       setDialogType('error');
       setDialogVisible(true);
       setIsProcessing(false);
+      setStudentDetails(null);
     }
   };
 
   const handleDialogClose = () => {
     setDialogVisible(false);
+    setStudentDetails(null);
     resetScanner();
   };
 
@@ -261,14 +149,24 @@ export default function ScannerScreen() {
   if (hasPermission === null) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <Text style={{ color: colors.text }}>Requesting camera permission</Text>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.permissionText, { color: colors.text }]}>
+          Requesting camera permission...
+        </Text>
       </View>
     );
   }
+
   if (hasPermission === false) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <Text style={{ color: colors.text }}>No access to camera</Text>
+        <Ionicons name="camera-off-outline" size={64} color={colors.textTertiary} />
+        <Text style={[styles.permissionText, { color: colors.text }]}>
+          No access to camera
+        </Text>
+        <Text style={[styles.permissionSubtext, { color: colors.textSecondary }]}>
+          Please grant camera permission in settings
+        </Text>
       </View>
     );
   }
@@ -276,12 +174,14 @@ export default function ScannerScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View>
+        <View style={styles.headerTextContainer}>
           <Text style={[styles.title, { color: colors.text }]}>Event Check-in</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Barcode Scanner</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+            Scan QR Code to Mark Attendance
+          </Text>
         </View>
         <Image 
-          source={require('../../assets/images/talentia_logo_version_gold.png')} 
+          source={require('../../assets/images/CL-Halloween.png')} 
           style={styles.logo}
           resizeMode="contain"
         />
@@ -304,6 +204,16 @@ export default function ScannerScreen() {
                 <View style={[styles.corner, styles.cornerBottomLeft, { borderColor: colors.primary }]} />
                 <View style={[styles.corner, styles.cornerBottomRight, { borderColor: colors.primary }]} />
               </View>
+              
+              {!isProcessing && !scanned && (
+                <View style={styles.scanPrompt}>
+                  <Ionicons name="scan-outline" size={32} color="#fff" />
+                  <Text style={styles.scanPromptText}>
+                    Position QR code within the frame
+                  </Text>
+                </View>
+              )}
+
               {isProcessing && (
                 <View style={styles.processingOverlay}>
                   <ActivityIndicator size="large" color={colors.primary} />
@@ -314,20 +224,28 @@ export default function ScannerScreen() {
           </CameraView>
         ) : (
           <View style={[styles.camera, styles.cameraInactive, { backgroundColor: colors.backgroundSecondary }]}>
-            <Ionicons name="camera-outline" size={48} color={colors.textTertiary} />
+            <Ionicons name="camera-outline" size={64} color={colors.textTertiary} />
             <Text style={[styles.cameraOffText, { color: colors.textSecondary }]}>
               Camera is off
             </Text>
+            <Text style={[styles.cameraOffSubtext, { color: colors.textTertiary }]}>
+              Tap "Start Scanning" to begin
+            </Text>
           </View>
         )}
+      </View>
 
+      <View style={[styles.footer, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
         <TouchableOpacity 
-          style={[styles.toggleButton, { backgroundColor: colors.primary }]}
+          style={[
+            styles.toggleButton, 
+            { backgroundColor: cameraActive ? colors.error : colors.primary }
+          ]}
           onPress={toggleCamera}
           disabled={isProcessing}
         >
           <Ionicons 
-            name={cameraActive ? 'stop' : 'camera'} 
+            name={cameraActive ? 'stop-circle' : 'play-circle'} 
             size={24} 
             color="#fff" 
           />
@@ -335,32 +253,112 @@ export default function ScannerScreen() {
             {cameraActive ? 'Stop Scanning' : 'Start Scanning'}
           </Text>
         </TouchableOpacity>
-      </View>
 
-      <View style={[styles.footer, { backgroundColor: colors.card }]}>
-        {lastScanned && (
+        {lastScannedName && (
           <View style={[styles.lastScannedContainer, { backgroundColor: colors.backgroundSecondary }]}>
-            <Ionicons name="time-outline" size={20} color={colors.textSecondary} />
-            <Text style={[styles.lastScannedText, { color: colors.textSecondary }]}>
-              Last scanned: {lastScanned}
+            <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+            <Text style={[styles.lastScannedText, { color: colors.textSecondary }]} numberOfLines={1}>
+              Last scanned: {lastScannedName}
             </Text>
           </View>
         )}
+
+        <View style={styles.statsContainer}>
+          <View style={[styles.statsCard, { backgroundColor: colors.backgroundSecondary }]}>
+            <Text style={[styles.statsNumber, { color: colors.primary }]}>
+              {totalAttendees}
+            </Text>
+            <Text style={[styles.statsLabel, { color: colors.textSecondary }]}>
+              Scanned on This Device
+            </Text>
+          </View>
+        </View>
       </View>
 
-      <View style={styles.statsContainer}>
-        <Text style={[styles.statsNumber, { color: colors.text }]}>{totalAttendees}</Text>
-        <Text style={[styles.statsLabel, { color: colors.textSecondary }]}>Total Attendees</Text>
-      </View>
+      {/* Custom Dialog with Student Details */}
+      {dialogVisible && studentDetails && (
+        <View style={styles.customDialogOverlay}>
+          <View style={[styles.customDialog, { backgroundColor: colors.card }]}>
+            {/* Header with Icon */}
+            <View style={[
+              styles.dialogHeader,
+              { backgroundColor: dialogType === 'warning' ? 'rgba(251, 191, 36, 0.1)' : 'rgba(34, 197, 94, 0.1)' }
+            ]}>
+              <Ionicons 
+                name={dialogType === 'warning' ? 'warning' : 'checkmark-circle'} 
+                size={64} 
+                color={dialogType === 'warning' ? '#fbbf24' : '#22c55e'} 
+              />
+            </View>
 
-      {/* Themed Dialog */}
-      <ThemedDialog
-        visible={dialogVisible}
-        title={dialogTitle}
-        message={dialogMessage}
-        type={dialogType}
-        onClose={handleDialogClose}
-      />
+            {/* Title */}
+            <Text style={[styles.dialogTitle, { color: colors.text }]}>
+              {dialogTitle}
+            </Text>
+
+            {/* Student Details Card */}
+            <View style={[styles.detailsCard, { backgroundColor: colors.backgroundSecondary }]}>
+              <View style={styles.detailRow}>
+                <Ionicons name="person" size={20} color={colors.primary} />
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.textTertiary }]}>Name</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>{studentDetails.name}</Text>
+                </View>
+              </View>
+
+              <View style={[styles.detailRow, styles.detailRowBorder, { borderTopColor: colors.border }]}>
+                <Ionicons name="school" size={20} color={colors.primary} />
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.textTertiary }]}>Department</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>{studentDetails.dept}</Text>
+                </View>
+              </View>
+
+              <View style={[styles.detailRow, styles.detailRowBorder, { borderTopColor: colors.border }]}>
+                <Ionicons name="calendar" size={20} color={colors.primary} />
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.textTertiary }]}>Year & Section</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    Year {studentDetails.year} - Section {studentDetails.sec}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.detailRow, styles.detailRowBorder, { borderTopColor: colors.border }]}>
+                <Ionicons name="trophy" size={20} color={colors.primary} />
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.textTertiary }]}>Event</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>{studentDetails.eventName}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Message */}
+            <Text style={[styles.dialogMessage, { color: colors.textSecondary }]}>
+              {dialogMessage}
+            </Text>
+
+            {/* Close Button */}
+            <TouchableOpacity 
+              style={[styles.dialogButton, { backgroundColor: colors.primary }]}
+              onPress={handleDialogClose}
+            >
+              <Text style={styles.dialogButtonText}>Continue</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Fallback Dialog (for errors without student details) */}
+      {dialogVisible && !studentDetails && (
+        <ThemedDialog
+          visible={true}
+          title={dialogTitle}
+          message={dialogMessage}
+          type={dialogType}
+          onClose={handleDialogClose}
+        />
+      )}
     </View>
   );
 }
@@ -369,24 +367,40 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  permissionText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  permissionSubtext: {
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
+    paddingHorizontal: 32,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
+    minHeight: 100,
+  },
+  headerTextContainer: {
+    flex: 1,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     marginTop: 4,
   },
   logo: {
     width: 100,
-    height: 80,
+    height: 60,
+    marginLeft: 12,
   },
   scannerContainer: {
     flex: 1,
@@ -403,6 +417,12 @@ const styles = StyleSheet.create({
   },
   cameraOffText: {
     marginTop: 16,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  cameraOffSubtext: {
+    marginTop: 8,
+    fontSize: 14,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -412,7 +432,7 @@ const styles = StyleSheet.create({
   overlayFrame: {
     width: 250,
     height: 250,
-    borderWidth: 1,
+    borderWidth: 2,
     borderRadius: 12,
   },
   overlayCorners: {
@@ -426,30 +446,41 @@ const styles = StyleSheet.create({
   cornerTopLeft: {
     top: '35%',
     left: '15%',
-    borderTopWidth: 2,
-    borderLeftWidth: 2,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
     borderTopLeftRadius: 8,
   },
   cornerTopRight: {
     top: '35%',
     right: '15%',
-    borderTopWidth: 2,
-    borderRightWidth: 2,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
     borderTopRightRadius: 8,
   },
   cornerBottomLeft: {
     bottom: '35%',
     left: '15%',
-    borderBottomWidth: 2,
-    borderLeftWidth: 2,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
     borderBottomLeftRadius: 8,
   },
   cornerBottomRight: {
     bottom: '35%',
     right: '15%',
-    borderBottomWidth: 2,
-    borderRightWidth: 2,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
     borderBottomRightRadius: 8,
+  },
+  scanPrompt: {
+    position: 'absolute',
+    bottom: '25%',
+    alignItems: 'center',
+  },
+  scanPromptText: {
+    color: '#fff',
+    marginTop: 12,
+    fontSize: 14,
+    fontWeight: '500',
   },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -461,6 +492,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginTop: 16,
     fontSize: 16,
+    fontWeight: '600',
   },
   footer: {
     padding: 20,
@@ -471,7 +503,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     marginBottom: 16,
   },
   toggleButtonText: {
@@ -483,22 +515,106 @@ const styles = StyleSheet.create({
   lastScannedContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     padding: 12,
     borderRadius: 8,
+    marginBottom: 16,
   },
   lastScannedText: {
     marginLeft: 8,
+    fontSize: 14,
+    flex: 1,
   },
   statsContainer: {
     alignItems: 'center',
-    marginBottom: 30,
+  },
+  statsCard: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    alignItems: 'center',
+    minWidth: 200,
   },
   statsNumber: {
-    fontSize: 36,
+    fontSize: 42,
     fontWeight: 'bold',
   },
   statsLabel: {
+    fontSize: 14,
+    marginTop: 4,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  // Custom Dialog Styles
+  customDialogOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  customDialog: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  dialogHeader: {
+    alignItems: 'center',
+    padding: 20,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  dialogTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  detailsCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  detailRowBorder: {
+    borderTopWidth: 1,
+  },
+  detailContent: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  detailValue: {
     fontSize: 16,
+    fontWeight: '600',
+  },
+  dialogMessage: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  dialogButton: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  dialogButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

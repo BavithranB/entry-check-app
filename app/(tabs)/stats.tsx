@@ -1,17 +1,15 @@
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
-import CryptoJS from 'crypto-js';
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
-import { FlatList, Image, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, Text, View, Image } from 'react-native';
 
 // Access environment variables from expo-constants
-const APP_SECRET = Constants.expoConfig?.extra?.appSecret;
 const API_BASE_URL_RAW = Constants.expoConfig?.extra?.apiBaseUrl;
-
+const API_BASE_URL = API_BASE_URL_RAW;
 // Ensure HTTPS is used to avoid CORS redirect issues
-const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
+// const API_BASE_URL = API_BASE_URL_RAW?.replace('http://', 'https://');
 
 // Create axios instance with base configuration
 const api = axios.create({
@@ -22,120 +20,50 @@ const api = axios.create({
   },
 });
 
-/**
- * HMAC-SHA256 implementation using crypto-js
- * Backend computes: HMAC-SHA256(secret, body + timestamp + secret)
- */
-async function createSignature(body: string, timestamp: string): Promise<string> {
-  const message = body + timestamp + APP_SECRET;
-  const key = APP_SECRET;
-  
-  // Use crypto-js to create HMAC-SHA256
-  const hmac = CryptoJS.HmacSHA256(message, key);
-  const signature = hmac.toString(CryptoJS.enc.Hex);
-  
-  return signature;
-}
-
-/**
- * Send a signed GET request to your FastAPI endpoint using axios.
- */
-async function sendSignedRequest(endpoint: string) {
-  try {
-    const body = '';  // Empty body for GET requests
-    const timestamp = Date.now().toString();
-    const signature = await createSignature(body, timestamp);
-
-    const response = await api.get(endpoint, {
-      headers: {
-        'X-App-Timestamp': timestamp,
-        'X-App-Signature': signature,
-      }
-    });
-
-    return response.data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      if (error.response) {
-        // Server responded with error status
-        throw new Error(error.response.data?.detail || `Request failed with status ${error.response.status}`);
-      } else if (error.request) {
-        // Request made but no response received
-        throw new Error('Unable to connect to server. Check your internet connection and API URL.');
-      } else {
-        // Error setting up the request
-        throw new Error(error.message || 'Failed to make request');
-      }
-    }
-    throw error;
-  }
+interface EventStats {
+  [eventName: string]: number;
 }
 
 export default function StatsScreen() {
   const { colors } = useTheme();
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [totalAttendees, setTotalAttendees] = useState(0);
-  const [yearWiseStats, setYearWiseStats] = useState<Array<{ year: number; attended: number }>>([]);
-  const [recentCheckIns, setRecentCheckIns] = useState([]);
+  const [eventStats, setEventStats] = useState<EventStats>({});
+
+  const MAX_CAPACITY_PER_EVENT = 100;
+  const TOTAL_MAX_CAPACITY = 400;
 
   // Fetch stats from the API
   const fetchStats = async () => {
     try {
-      if (!APP_SECRET) {
-        throw new Error('APP_SECRET is not configured. Check your app.json extra config.');
-      }
       if (!API_BASE_URL) {
         throw new Error('API_BASE_URL is not configured. Check your app.json extra config.');
       }
 
-      // Get overall stats
-      const statsResponse = await sendSignedRequest('/stats');
+      const response = await api.get('/totalcount');
+      const data: EventStats = response.data;
       
-      // Backend returns { summary: [{ year: number, attended: number }] }
-      const yearStats = statsResponse.summary || [];
-      const total = yearStats.reduce((sum: number, item: any) => sum + (item.attended || 0), 0);
+      // Calculate total attendees
+      const total = Object.values(data).reduce((sum, count) => sum + count, 0);
       
       setTotalAttendees(total);
-      setYearWiseStats(yearStats);
-
-      // Get recent students (first page)
-      const recentResponse = await sendSignedRequest('/recent_students?page=1&per_page=10');
-
-      // Transform API response to match component's data structure
-      if (recentResponse.students && Array.isArray(recentResponse.students)) {
-        const transformedCheckIns = recentResponse.students.map((student: any, index: number) => {
-          // Convert attended_at to time format
-          let timeStr = 'N/A';
-          if (student.attended_at) {
-            try {
-              const date = new Date(student.attended_at);
-              timeStr = date.toLocaleTimeString('en-US', { 
-                hour: 'numeric', 
-                minute: '2-digit',
-                hour12: true 
-              });
-            } catch (e) {
-              console.error('Error parsing date:', e);
-            }
-          }
-
-          return {
-            id: student.reg_no || index.toString(),
-            name: student.name || 'Unknown',
-            idNumber: student.reg_no || 'N/A',
-            type: 'Scanned', // Backend doesn't distinguish between scanned and manual
-            time: timeStr
-          };
-        });
-        setRecentCheckIns(transformedCheckIns);
-      }
-      
+      setEventStats(data);
       setError(null);
     } catch (err: any) {
       console.error("Failed to fetch stats:", err.message);
-      setError(err.message);
+      if (axios.isAxiosError(err)) {
+        if (err.response) {
+          setError(err.response.data?.detail || `Request failed with status ${err.response.status}`);
+        } else if (err.request) {
+          setError('Unable to connect to server. Check your internet connection and API URL.');
+        } else {
+          setError(err.message || 'Failed to make request');
+        }
+      } else {
+        setError(err.message || 'An error occurred');
+      }
     } finally {
       setLoading(false);
     }
@@ -153,35 +81,64 @@ export default function StatsScreen() {
     setRefreshing(false);
   };
 
-  const renderItem = ({ item }) => (
-    <View style={[styles.checkInItem, { backgroundColor: colors.card }]}>
-      <View style={styles.checkInInfo}>
-        <Text style={[styles.checkInName, { color: colors.text }]}>{item.name}</Text>
-        <Text style={[styles.checkInId, { color: colors.textSecondary }]}>
-          ID: {item.idNumber}
+  // Calculate percentage for progress bar
+  const getPercentage = (count: number, max: number) => {
+    return Math.min((count / max) * 100, 100);
+  };
+
+  // Get color based on capacity percentage
+  const getCapacityColor = (percentage: number) => {
+    if (percentage >= 90) return '#ef4444'; // red
+    if (percentage >= 70) return '#f59e0b'; // amber
+    return colors.primary; // default primary color
+  };
+
+  const renderEventCard = (eventName: string, count: number) => {
+    const percentage = getPercentage(count, MAX_CAPACITY_PER_EVENT);
+    const barColor = getCapacityColor(percentage);
+    
+    // Remove " - CL Flix" suffix if present
+    const displayName = eventName.replace(/ - CL Flix$/i, '');
+
+    return (
+      <View key={eventName} style={[styles.eventCard, { backgroundColor: colors.card }]}>
+        <View style={styles.eventHeader}>
+          <Text style={[styles.eventName, { color: colors.text }]} numberOfLines={2}>
+            {displayName}
+          </Text>
+          <View style={styles.eventCount}>
+            <Text style={[styles.countNumber, { color: barColor }]}>{count}</Text>
+            <Text style={[styles.countTotal, { color: colors.textSecondary }]}>
+              /{MAX_CAPACITY_PER_EVENT}
+            </Text>
+          </View>
+        </View>
+        
+        {/* Progress Bar */}
+        <View style={[styles.progressBarContainer, { backgroundColor: colors.border }]}>
+          <View 
+            style={[
+              styles.progressBarFill, 
+              { 
+                width: `${percentage}%`,
+                backgroundColor: barColor 
+              }
+            ]} 
+          />
+        </View>
+        
+        <Text style={[styles.percentageText, { color: colors.textSecondary }]}>
+          {percentage.toFixed(1)}% capacity
         </Text>
       </View>
-      <View style={styles.checkInMeta}>
-        <Text 
-          style={[
-            styles.checkInType, 
-            item.type === 'Scanned' 
-              ? { backgroundColor: colors.primary + '20', color: colors.primary }
-              : { backgroundColor: colors.secondary + '20', color: colors.secondary }
-          ]}
-        >
-          {item.type}
-        </Text>
-        <Text style={[styles.checkInTime, { color: colors.textTertiary }]}>{item.time}</Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
-      <Ionicons name="people-outline" size={48} color={colors.textTertiary} />
+      <Ionicons name="bar-chart-outline" size={48} color={colors.textTertiary} />
       <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-        {error ? error : 'No check-ins yet'}
+        {error ? error : 'No event data available'}
       </Text>
       {error && (
         <Text style={[styles.retryText, { color: colors.primary }]} onPress={fetchStats}>
@@ -191,70 +148,78 @@ export default function StatsScreen() {
     </View>
   );
 
+  const overallPercentage = getPercentage(totalAttendees, TOTAL_MAX_CAPACITY);
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View>
-          <Text style={[styles.title, { color: colors.text }]}>Event Check-in</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Recent Check-ins</Text>
+        <View style={styles.headerTextContainer}>
+          <Text style={[styles.title, { color: colors.text }]}>Event Statistics</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Live Attendance Tracking</Text>
         </View>
         <Image 
-          source={require('../../assets/images/talentia_logo_version_gold.png')} 
+          source={require('../../assets/images/CL-Halloween.png')} 
           style={styles.logo}
           resizeMode="contain"
         />
       </View>
 
-      {/* Stats Summary */}
-      <View style={[styles.summaryContainer, { backgroundColor: colors.card }]}>
-        {/* Left Side - Total Attendees */}
-        <View style={styles.totalSection}>
-          <Text style={[styles.totalNumber, { color: colors.primary }]}>{totalAttendees}</Text>
-          <Text style={[styles.totalLabel, { color: colors.textSecondary }]}>Total Attendees</Text>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
+      >
+        {/* Total Summary */}
+        <View style={[styles.totalContainer, { backgroundColor: colors.card }]}>
+          <View style={styles.totalContent}>
+            <Text style={[styles.totalNumber, { color: colors.primary }]}>
+              {totalAttendees}
+            </Text>
+            <Text style={[styles.totalLabel, { color: colors.textSecondary }]}>
+              Total Attendees
+            </Text>
+            <Text style={[styles.capacityLabel, { color: colors.textTertiary }]}>
+              out of {TOTAL_MAX_CAPACITY} total capacity
+            </Text>
+            
+            {/* Overall Progress Bar */}
+            <View style={[styles.overallProgressContainer, { backgroundColor: colors.border }]}>
+              <View 
+                style={[
+                  styles.overallProgressFill, 
+                  { 
+                    width: `${overallPercentage}%`,
+                    backgroundColor: getCapacityColor(overallPercentage)
+                  }
+                ]} 
+              />
+            </View>
+            <Text style={[styles.overallPercentage, { color: colors.textSecondary }]}>
+              {overallPercentage.toFixed(1)}% overall capacity
+            </Text>
+          </View>
         </View>
-        
-        {/* Divider */}
-        <View style={[styles.verticalDivider, { backgroundColor: colors.border }]} />
-        
-        {/* Right Side - Year-wise Breakdown */}
-        <View style={styles.yearWiseSection}>
-          <Text style={[styles.yearWiseTitle, { color: colors.text }]}>Year-wise</Text>
-          {yearWiseStats.length > 0 ? (
-            yearWiseStats.map((yearStat, index) => (
-              <View key={index} style={styles.yearRow}>
-                <Text style={[styles.yearText, { color: colors.textSecondary }]}>
-                  Year {yearStat.year}
-                </Text>
-                <Text style={[styles.yearCount, { color: colors.text }]}>
-                  {yearStat.attended}
-                </Text>
-              </View>
-            ))
+
+        {/* Event Cards */}
+        <View style={styles.eventsContainer}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Breakdown</Text>
+          
+          {Object.keys(eventStats).length > 0 ? (
+            Object.entries(eventStats).map(([eventName, count]) => 
+              renderEventCard(eventName, count)
+            )
           ) : (
-            <Text style={[styles.noDataText, { color: colors.textTertiary }]}>No data</Text>
+            renderEmpty()
           )}
         </View>
-      </View>
-
-      {/* Recent Check-ins List */}
-      <View style={styles.listContainer}>
-        <FlatList
-          data={recentCheckIns}
-          renderItem={renderItem}
-          keyExtractor={(item, index) => item.id || index.toString()}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={renderEmpty}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.primary}
-              colors={[colors.primary]}
-            />
-          }
-        />
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -269,134 +234,121 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
+    minHeight: 100,
+  },
+  headerTextContainer: {
+    flex: 1,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     marginTop: 4,
   },
   logo: {
-    width: 40,
-    height: 40,
+    width: 100,
+    height: 60,
+    marginLeft: 12,
   },
-  summaryContainer: {
-    flexDirection: 'row',
+  totalContainer: {
     margin: 20,
-    borderRadius: 12,
-    padding: 20,
+    borderRadius: 16,
+    padding: 24,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  totalSection: {
-    flex: 1,
+  totalContent: {
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingRight: 16,
   },
   totalNumber: {
-    fontSize: 48,
+    fontSize: 56,
     fontWeight: 'bold',
     marginBottom: 8,
   },
   totalLabel: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  verticalDivider: {
-    width: 1,
-    alignSelf: 'stretch',
-    marginVertical: 8,
-  },
-  yearWiseSection: {
-    flex: 1,
-    paddingLeft: 16,
-  },
-  yearWiseTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  yearRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  yearText: {
-    fontSize: 14,
-  },
-  yearCount: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  noDataText: {
-    fontSize: 14,
-    fontStyle: 'italic',
-  },
-  summaryItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  summaryNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  summaryLabel: {
-    fontSize: 14,
-  },
-  summaryDivider: {
-    width: 1,
-    marginVertical: 8,
-  },
-  listContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  checkInItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  checkInInfo: {
-    flex: 1,
-  },
-  checkInName: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     marginBottom: 4,
   },
-  checkInId: {
+  capacityLabel: {
     fontSize: 14,
+    marginBottom: 16,
   },
-  checkInMeta: {
-    alignItems: 'flex-end',
-  },
-  checkInType: {
-    fontSize: 12,
-    fontWeight: '600',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+  overallProgressContainer: {
+    width: '100%',
+    height: 8,
     borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 4,
+    marginTop: 8,
   },
-  checkInTime: {
-    fontSize: 12,
+  overallProgressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  overallPercentage: {
+    fontSize: 14,
+    marginTop: 8,
+  },
+  eventsContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  eventCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  eventHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  eventName: {
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+    marginRight: 12,
+  },
+  eventCount: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  countNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  countTotal: {
+    fontSize: 16,
+    marginLeft: 2,
+  },
+  progressBarContainer: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  percentageText: {
+    fontSize: 13,
   },
   emptyContainer: {
     alignItems: 'center',

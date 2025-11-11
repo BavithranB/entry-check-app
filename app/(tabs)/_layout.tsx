@@ -32,17 +32,7 @@ export default function TabLayout() {
           },
         }}
       >
-        <Tabs.Screen
-          name="manual"
-          options={{
-            title: 'Manual',
-            tabBarIcon: ({ color }) => (
-              <View style={styles.tabIconContainer}>
-                <Ionicons name="create-outline" size={24} color={color} />
-              </View>
-            ),
-          }}
-        />
+        
         <Tabs.Screen
           name="scanner"
           options={{
@@ -61,6 +51,19 @@ export default function TabLayout() {
             tabBarIcon: ({ color }) => (
               <View style={styles.tabIconContainer}>
                 <Ionicons name="stats-chart-outline" size={24} color={color} />
+              </View>
+            ),
+          }}
+        />
+
+        <Tabs.Screen
+          name="manual"
+          options={{
+            title: 'Manual',
+            href: null,
+            tabBarIcon: ({ color }) => (
+              <View style={styles.tabIconContainer}>
+                <Ionicons name="create-outline" size={24} color={color} />
               </View>
             ),
           }}

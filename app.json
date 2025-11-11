@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "Thandi Than Paren v2",
+    "name": "Bayama Irukku",
     "slug": "event-checkin-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/gold_CL.png",
+    "icon": "./assets/images/CL-Halloween.png",
     "scheme": "eventcheckinapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "extra": {
       "appSecret": "cdb8d7497b34a314db76dd832803b393f6f4ef0dfa2a1dd230a7c8b32d600fb9",
-      "apiBaseUrl": "https://unique-inspiration-production.up.railway.app",
+      "apiBaseUrl": "https://cl-main-backend-production.up.railway.app",
       "router": {},
       "eas": {
         "projectId": "c7e11439-667e-4c35-834a-1d77c136471b"
@@ -28,8 +28,8 @@
     "android": {
       "package": "com.talentia.thandiparen",
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/gold_CL_adaptive.png"
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/images/CL-Halloween.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -37,17 +37,17 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/gold_CL.png"
+      "favicon": "./assets/images/CL-Halloween.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/gold_CL_splash.png",
+          "image": "./assets/images/CL-Halloween.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#000000",
           "dark": {
             "backgroundColor": "#000000"
           }
